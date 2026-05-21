@@ -1,6 +1,11 @@
 import pymysql
 import re
+import os
 from pymysql.constants import CLIENT
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 print("Binabasa ang schema.sql...")
 with open('migrations/schema.sql', 'r', encoding='utf-8') as file:
@@ -25,13 +30,20 @@ sql_script = re.sub(
     flags=re.IGNORECASE,
 )
 
-print("Kumokonekta sa Railway Database...")
+# Read from .env file
+db_host = os.environ.get("DB_HOST")
+db_user = os.environ.get("DB_USER")
+db_password = os.environ.get("DB_PASSWORD")
+db_port = int(os.environ.get("DB_PORT", 3306))
+db_name = os.environ.get("DB_NAME")
+
+print(f"Kumokonekta sa Railway Database: {db_host}:{db_port}/{db_name}...")
 conn = pymysql.connect(
-    host='maglev.proxy.rlwy.net',
-    user='root',
-    password='PzpYLXLyJnZKTtnxoWVVWoMZNuQDNPvP',
-    port=36548,
-    database='railway',
+    host=db_host,
+    user=db_user,
+    password=db_password,
+    port=db_port,
+    database=db_name,
     client_flag=CLIENT.MULTI_STATEMENTS  # Ito ang sikreto para ma-run lahat ng tables sabay-sabay!
 )
 
