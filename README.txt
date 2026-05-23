@@ -36,6 +36,34 @@ Optional SMTP (forgot password flow):
   MAIL_USE_SSL=false
   MAIL_FROM=no-reply@yourdomain.com
 
+IMPORTANT: Railway Deployment SMTP Setup
+========================================
+To enable password reset emails on Railway:
+
+1. Configure these environment variables in your Railway project:
+   - MAIL_SERVER: Your SMTP server (e.g., smtp.gmail.com, smtp.sendgrid.net)
+   - MAIL_PORT: SMTP port (587 for TLS, 465 for SSL, 25 for unencrypted)
+   - MAIL_USERNAME: Your SMTP username or email
+   - MAIL_PASSWORD: Your SMTP password or API key (NOT your regular password for Gmail)
+   - MAIL_USE_TLS: true (for port 587 with STARTTLS)
+   - MAIL_USE_SSL: false (change to true for port 465)
+   - MAIL_FROM: Sender email address (e.g., noreply@example.com)
+
+2. For Gmail:
+   - Use: MAIL_SERVER=smtp.gmail.com, MAIL_PORT=587, MAIL_USE_TLS=true
+   - Generate an App Password (not your main password):
+     https://support.google.com/accounts/answer/185833
+   - Use the 16-character app password as MAIL_PASSWORD
+
+3. For SendGrid:
+   - Use: MAIL_SERVER=smtp.sendgrid.net, MAIL_PORT=587, MAIL_USE_TLS=true
+   - MAIL_USERNAME=apikey
+   - MAIL_PASSWORD=your_sendgrid_api_key
+
+4. Test in Railway logs:
+   - Deploy the app and check logs for "Password reset email sent" messages
+   - If it shows "Failed to send password reset email", check the error message in logs
+
 5) Initialize database
 - SQLite mode: created automatically on app startup.
 - MySQL mode:

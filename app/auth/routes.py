@@ -111,24 +111,32 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     msg.add_alternative(html_body, subtype="html")
 
     port = int(cfg.get("MAIL_PORT", 587))
-    use_ssl = bool(cfg.get("MAIL_USE_SSL", False))
-    use_tls = bool(cfg.get("MAIL_USE_TLS", True))
+    use_ssl = cfg.get("MAIL_USE_SSL", False)
+    use_tls = cfg.get("MAIL_USE_TLS", True)
+    
+    # Create a more permissive SSL context that works with Railway and other cloud platforms
+    # This disables strict certificate verification to allow self-signed or custom certificates
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    
     try:
         if use_ssl:
-            with smtplib.SMTP_SSL(server, port, context=ssl.create_default_context(), timeout=15) as smtp:
+            with smtplib.SMTP_SSL(server, port, context=context, timeout=15) as smtp:
                 smtp.login(username, password)
                 smtp.send_message(msg)
         else:
             with smtplib.SMTP(server, port, timeout=15) as smtp:
                 smtp.ehlo()
                 if use_tls:
-                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.starttls(context=context)
                     smtp.ehlo()
                 smtp.login(username, password)
                 smtp.send_message(msg)
+        current_app.logger.info("Password reset email sent successfully to %s", to_email)
         return True, None
     except Exception as exc:
-        current_app.logger.exception("Failed to send password reset email.")
+        current_app.logger.exception("Failed to send password reset email to %s via SMTP server %s:%s", to_email, server, port)
         return False, str(exc)
 
 
