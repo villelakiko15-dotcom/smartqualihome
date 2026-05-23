@@ -88,23 +88,8 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     username = (cfg.get("MAIL_USERNAME") or "").strip()
     password = cfg.get("MAIL_PASSWORD") or ""
     from_addr = (cfg.get("MAIL_FROM") or username or "no-reply@qualihome.local").strip()
-    
-    # Print to stdout for Railway logs (print is more reliable than logger)
-    server_status = "set" if server else "NOT SET"
-    username_status = "set" if username else "NOT SET"
-    print(f"[EMAIL] Password reset requested for {to_email}")
-    print(f"[EMAIL] SMTP Server: {server_status} (value: {server or 'empty'})")
-    print(f"[EMAIL] SMTP Username: {username_status} (value: {username or 'empty'})")
-    print(f"[EMAIL] SMTP Port: {cfg.get('MAIL_PORT', 587)}")
-    
     if not server or not username or not password:
-        missing = []
-        if not server: missing.append("MAIL_SERVER")
-        if not username: missing.append("MAIL_USERNAME")
-        if not password: missing.append("MAIL_PASSWORD")
-        error_msg = f"Missing SMTP environment variables: {', '.join(missing)}. Please set these in Railway project variables."
-        print(f"[EMAIL] ERROR: {error_msg}")
-        return False, error_msg
+        return False, "Missing SMTP configuration (server/username/password)."
 
     subject = "QUALIHOME Password Reset"
     text_body = (
@@ -126,39 +111,25 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     msg.add_alternative(html_body, subtype="html")
 
     port = int(cfg.get("MAIL_PORT", 587))
-    use_ssl = cfg.get("MAIL_USE_SSL", False)
-    use_tls = cfg.get("MAIL_USE_TLS", True)
-    
-    print(f"[EMAIL] Attempting to send to {to_email} via {server}:{port} (SSL={use_ssl}, TLS={use_tls})")
-    
-    # Create a more permissive SSL context that works with Railway and other cloud platforms
-    # This disables strict certificate verification to allow self-signed or custom certificates
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    
+    use_ssl = bool(cfg.get("MAIL_USE_SSL", False))
+    use_tls = bool(cfg.get("MAIL_USE_TLS", True))
     try:
         if use_ssl:
-            print(f"[EMAIL] Using SMTP_SSL to {server}:{port}")
-            with smtplib.SMTP_SSL(server, port, context=context, timeout=15) as smtp:
+            with smtplib.SMTP_SSL(server, port, context=ssl.create_default_context(), timeout=15) as smtp:
                 smtp.login(username, password)
                 smtp.send_message(msg)
         else:
-            print(f"[EMAIL] Using SMTP to {server}:{port}")
             with smtplib.SMTP(server, port, timeout=15) as smtp:
                 smtp.ehlo()
                 if use_tls:
-                    print(f"[EMAIL] Starting STARTTLS")
-                    smtp.starttls(context=context)
+                    smtp.starttls(context=ssl.create_default_context())
                     smtp.ehlo()
                 smtp.login(username, password)
                 smtp.send_message(msg)
-        print(f"[EMAIL] SUCCESS: Password reset email sent to {to_email}")
         return True, None
     except Exception as exc:
-        error_str = str(exc)
-        print(f"[EMAIL] FAILED: Could not send to {to_email}. Error: {error_str}")
-        return False, error_str
+        current_app.logger.exception("Failed to send password reset email.")
+        return False, str(exc)
 
 
 def _compute_result(gross_income: float, monthly_debt: float,
