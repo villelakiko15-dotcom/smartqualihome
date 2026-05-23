@@ -88,8 +88,21 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     username = (cfg.get("MAIL_USERNAME") or "").strip()
     password = cfg.get("MAIL_PASSWORD") or ""
     from_addr = (cfg.get("MAIL_FROM") or username or "no-reply@qualihome.local").strip()
+    
+    # Log what we have (for debugging)
+    current_app.logger.warning("Password reset email requested. SMTP config: server=%s, username=%s, port=%s", 
+                               "set" if server else "NOT SET", 
+                               "set" if username else "NOT SET",
+                               cfg.get("MAIL_PORT", 587))
+    
     if not server or not username or not password:
-        return False, "Missing SMTP configuration (server/username/password)."
+        error_msg = "Missing SMTP configuration: " + ", ".join([
+            "server" if not server else "",
+            "username" if not username else "",
+            "password" if not password else "",
+        ]).strip(", ")
+        current_app.logger.error(error_msg)
+        return False, error_msg
 
     subject = "QUALIHOME Password Reset"
     text_body = (
@@ -114,6 +127,9 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     use_ssl = cfg.get("MAIL_USE_SSL", False)
     use_tls = cfg.get("MAIL_USE_TLS", True)
     
+    current_app.logger.info("Attempting to send password reset email to %s via %s:%s (SSL=%s, TLS=%s)", 
+                            to_email, server, port, use_ssl, use_tls)
+    
     # Create a more permissive SSL context that works with Railway and other cloud platforms
     # This disables strict certificate verification to allow self-signed or custom certificates
     context = ssl.create_default_context()
@@ -122,21 +138,25 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     
     try:
         if use_ssl:
+            current_app.logger.debug("Using SMTP_SSL")
             with smtplib.SMTP_SSL(server, port, context=context, timeout=15) as smtp:
                 smtp.login(username, password)
                 smtp.send_message(msg)
         else:
+            current_app.logger.debug("Using SMTP with EHLO")
             with smtplib.SMTP(server, port, timeout=15) as smtp:
                 smtp.ehlo()
                 if use_tls:
+                    current_app.logger.debug("Starting TLS")
                     smtp.starttls(context=context)
                     smtp.ehlo()
                 smtp.login(username, password)
                 smtp.send_message(msg)
-        current_app.logger.info("Password reset email sent successfully to %s", to_email)
+        current_app.logger.info("✓ Password reset email sent successfully to %s", to_email)
         return True, None
     except Exception as exc:
-        current_app.logger.exception("Failed to send password reset email to %s via SMTP server %s:%s", to_email, server, port)
+        current_app.logger.exception("✗ Failed to send password reset email to %s via SMTP %s:%s. Error: %s", 
+                                     to_email, server, port, str(exc))
         return False, str(exc)
 
 
