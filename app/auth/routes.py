@@ -89,19 +89,21 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     password = cfg.get("MAIL_PASSWORD") or ""
     from_addr = (cfg.get("MAIL_FROM") or username or "no-reply@qualihome.local").strip()
     
-    # Log what we have (for debugging)
-    current_app.logger.warning("Password reset email requested. SMTP config: server=%s, username=%s, port=%s", 
-                               "set" if server else "NOT SET", 
-                               "set" if username else "NOT SET",
-                               cfg.get("MAIL_PORT", 587))
+    # Print to stdout for Railway logs (print is more reliable than logger)
+    server_status = "set" if server else "NOT SET"
+    username_status = "set" if username else "NOT SET"
+    print(f"[EMAIL] Password reset requested for {to_email}")
+    print(f"[EMAIL] SMTP Server: {server_status} (value: {server or 'empty'})")
+    print(f"[EMAIL] SMTP Username: {username_status} (value: {username or 'empty'})")
+    print(f"[EMAIL] SMTP Port: {cfg.get('MAIL_PORT', 587)}")
     
     if not server or not username or not password:
-        error_msg = "Missing SMTP configuration: " + ", ".join([
-            "server" if not server else "",
-            "username" if not username else "",
-            "password" if not password else "",
-        ]).strip(", ")
-        current_app.logger.error(error_msg)
+        missing = []
+        if not server: missing.append("MAIL_SERVER")
+        if not username: missing.append("MAIL_USERNAME")
+        if not password: missing.append("MAIL_PASSWORD")
+        error_msg = f"Missing SMTP environment variables: {', '.join(missing)}. Please set these in Railway project variables."
+        print(f"[EMAIL] ERROR: {error_msg}")
         return False, error_msg
 
     subject = "QUALIHOME Password Reset"
@@ -127,8 +129,7 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     use_ssl = cfg.get("MAIL_USE_SSL", False)
     use_tls = cfg.get("MAIL_USE_TLS", True)
     
-    current_app.logger.info("Attempting to send password reset email to %s via %s:%s (SSL=%s, TLS=%s)", 
-                            to_email, server, port, use_ssl, use_tls)
+    print(f"[EMAIL] Attempting to send to {to_email} via {server}:{port} (SSL={use_ssl}, TLS={use_tls})")
     
     # Create a more permissive SSL context that works with Railway and other cloud platforms
     # This disables strict certificate verification to allow self-signed or custom certificates
@@ -138,26 +139,26 @@ def _send_reset_email(to_email: str, reset_url: str) -> tuple[bool, str | None]:
     
     try:
         if use_ssl:
-            current_app.logger.debug("Using SMTP_SSL")
+            print(f"[EMAIL] Using SMTP_SSL to {server}:{port}")
             with smtplib.SMTP_SSL(server, port, context=context, timeout=15) as smtp:
                 smtp.login(username, password)
                 smtp.send_message(msg)
         else:
-            current_app.logger.debug("Using SMTP with EHLO")
+            print(f"[EMAIL] Using SMTP to {server}:{port}")
             with smtplib.SMTP(server, port, timeout=15) as smtp:
                 smtp.ehlo()
                 if use_tls:
-                    current_app.logger.debug("Starting TLS")
+                    print(f"[EMAIL] Starting STARTTLS")
                     smtp.starttls(context=context)
                     smtp.ehlo()
                 smtp.login(username, password)
                 smtp.send_message(msg)
-        current_app.logger.info("✓ Password reset email sent successfully to %s", to_email)
+        print(f"[EMAIL] SUCCESS: Password reset email sent to {to_email}")
         return True, None
     except Exception as exc:
-        current_app.logger.exception("✗ Failed to send password reset email to %s via SMTP %s:%s. Error: %s", 
-                                     to_email, server, port, str(exc))
-        return False, str(exc)
+        error_str = str(exc)
+        print(f"[EMAIL] FAILED: Could not send to {to_email}. Error: {error_str}")
+        return False, error_str
 
 
 def _compute_result(gross_income: float, monthly_debt: float,
