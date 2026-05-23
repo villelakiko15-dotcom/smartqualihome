@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime
 
 from flask import Flask
@@ -75,6 +76,16 @@ def _ensure_default_users(app: Flask) -> None:
 def create_app(config_class=Config):
 	app = Flask(__name__, instance_relative_config=True)
 	app.config.from_object(config_class)
+
+	# Configure logging to show all levels (DEBUG and above)
+	if not app.debug and not app.testing:
+		logging.basicConfig(
+			level=logging.INFO,
+			format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+		)
+		app.logger.setLevel(logging.INFO)
+	else:
+		app.logger.setLevel(logging.DEBUG)
 
 	# Ensure writable instance paths exist.
 	os.makedirs(app.instance_path, exist_ok=True)
