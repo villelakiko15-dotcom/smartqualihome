@@ -77,15 +77,16 @@ def create_app(config_class=Config):
 	app = Flask(__name__, instance_relative_config=True)
 	app.config.from_object(config_class)
 
-	# Configure logging to show all levels (DEBUG and above)
+	# Configure logging to output to stdout (for Railway and production servers)
+	import sys
 	if not app.debug and not app.testing:
-		logging.basicConfig(
-			level=logging.INFO,
-			format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-		)
+		# Production: use file handler that writes to stdout
+		handler = logging.StreamHandler(sys.stdout)
+		handler.setLevel(logging.INFO)
+		formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+		handler.setFormatter(formatter)
+		app.logger.addHandler(handler)
 		app.logger.setLevel(logging.INFO)
-	else:
-		app.logger.setLevel(logging.DEBUG)
 
 	# Ensure writable instance paths exist.
 	os.makedirs(app.instance_path, exist_ok=True)
