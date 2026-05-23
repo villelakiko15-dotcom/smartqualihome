@@ -3455,6 +3455,13 @@ def agent_edit_property(prop_id):
 
     prop.approval_status = "approved"
 
+    # Handle image deletion (when user removes all images)
+    remove_images = request.form.getlist("remove_images")
+    if remove_images:
+        # User deleted images - clear from database
+        prop.image_data = None
+        prop.image_mimetype = None
+
     # Handle image updates (database storage for Railway compatibility)
     new_images  = _save_property_images(request.files.getlist("images"))
     if new_images:
