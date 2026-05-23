@@ -57,6 +57,19 @@ Data and storage
 - Production option: MySQL via app/config.py and migrations/schema.sql.
 - Uploads: instance/uploads.
 
+DATABASE COLUMNS TO ADD ON RAILWAY (Image Persistence Fix)
+Run these ALTER TABLE statements in your Railway MySQL database:
+
+-- Properties table - add image storage columns for Railway ephemeral filesystem compatibility
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS image_data LONGBLOB NULL AFTER images;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS image_mimetype VARCHAR(50) NULL AFTER image_data;
+
+Column Definitions:
+- image_data: LONGBLOB - stores actual image file content (supports files up to 4GB)
+- image_mimetype: VARCHAR(50) - stores MIME type (e.g., 'image/jpeg', 'image/png', 'image/webp')
+
+Subdivisions table already has these columns, so no changes needed for subdivisions.
+
 Startup behavior
 On app startup, the system:
 1) Creates/opens required instance paths.

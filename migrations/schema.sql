@@ -214,12 +214,15 @@ CREATE TABLE IF NOT EXISTS properties (
     floor_area      FLOAT COMMENT 'sqm',
     lot_area        FLOAT COMMENT 'sqm',
     description     TEXT,
-    images          TEXT         COMMENT 'comma-separated filenames',
+    images          TEXT         COMMENT 'comma-separated filenames (legacy)',
+    image_data      LONGBLOB COMMENT 'Database storage for Railway compatibility',
+    image_mimetype  VARCHAR(50),
     agent_id        INT,
     subdivision_id  INT NULL,
     unit_id         VARCHAR(60) NULL,
     status          ENUM('available','sold','reserved') DEFAULT 'available',
     approval_status VARCHAR(20) DEFAULT 'approved' COMMENT 'pending / approved / rejected',
+    custom_availability_note VARCHAR(255) NULL,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (agent_id)       REFERENCES users(id)        ON DELETE SET NULL,
     FOREIGN KEY (subdivision_id) REFERENCES subdivisions(id) ON DELETE SET NULL,
@@ -232,6 +235,11 @@ ALTER TABLE properties ADD COLUMN IF NOT EXISTS barangay_code VARCHAR(15) NULL A
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS barangay_name VARCHAR(120) NULL AFTER barangay_code;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS interest_rate DECIMAL(5,2) DEFAULT 7.50 AFTER lmf_rate;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS financing_years_json VARCHAR(50) DEFAULT '[5,10,15,20]' AFTER interest_rate;
+-- Add database image storage columns for Railway compatibility (ephemeral filesystem fix)
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS image_data LONGBLOB NULL AFTER images;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS image_mimetype VARCHAR(50) NULL AFTER image_data;
+-- Add custom availability note column
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS custom_availability_note VARCHAR(255) NULL;
 
 -- Property financing options (pre-calculated payment scenarios)
 CREATE TABLE IF NOT EXISTS property_financing_options (
