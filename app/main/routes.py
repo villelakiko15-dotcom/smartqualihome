@@ -301,40 +301,31 @@ SUBDIVISIONS = [
 
 
 def _save_subdivision_image_file(file_obj):
-    """Read image file and return (image_data, mimetype) tuple.
-    
-    For Railway/ephemeral filesystem compatibility, images are now stored 
-    in the database as BLOBs rather than on disk.
-    """
-    if not file_obj or not file_obj.filename:
-        return None, None
-    
-    payload = file_obj.read()
-    if not payload:
-        return None, None
-    
-    # Validate file size (max 5MB per image)
-    if len(payload) > 5 * 1024 * 1024:
-        raise ValueError("Image file too large. Maximum size is 5 MB.")
-    
-    mimetype = file_obj.mimetype or "image/jpeg"
-    
-    # Validate image mimetype
-    allowed_mimetypes = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-    if not any(mt in mimetype.lower() for mt in allowed_mimetypes):
-        raise ValueError(f"Unsupported image type: {mimetype}. Allowed: JPG, PNG, WEBP, GIF.")
-    
-    return payload, mimetype
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    os.makedirs(upload_dir, exist_ok=True)
+    original = secure_filename(file_obj.filename or "")
+    ext = os.path.splitext(original)[1].lower()
+    if not ext:
+        mime = (file_obj.mimetype or "").lower()
+        if "png" in mime:
+            ext = ".png"
+        elif "webp" in mime:
+            ext = ".webp"
+        elif "gif" in mime:
+            ext = ".gif"
+        else:
+            ext = ".jpg"
+    filename = f"sub_{uuid.uuid4().hex}{ext}"
+    file_obj.save(os.path.join(upload_dir, filename))
+    return filename
 
 
 def _subdivision_images_to_list(subdivision):
-    """For backward compatibility. Returns empty list as images are now in DB."""
-    return []
+    return list(subdivision.images or [])
 
 
 def _set_subdivision_images(subdivision, filenames):
-    """For backward compatibility. No-op as images are stored in DB."""
-    pass
+    subdivision.images = [name for name in filenames if name]
 
 
 def _notify_all_agents(event_type: str, message: str, property_id=None) -> None:
@@ -2216,26 +2207,19 @@ def admin_create_subdivision():
         )
         db.session.add(sub)
         db.session.flush()
-        
-        # Store first uploaded image in database (replaces filesystem storage for Railway compatibility)
+        image_files = []
         files = request.files.getlist("image_files")
         for f in files:
             if f and f.filename:
                 try:
                     f.stream.seek(0)
-                    image_data, image_mimetype = _save_subdivision_image_file(f)
-                    if image_data:
-                        sub.image_data = image_data
-                        sub.image_mimetype = image_mimetype
-                        break  # Store only the first image for now
-                except ValueError as e:
-                    current_app.logger.warning(f"Image upload skipped: {e}")
-                except Exception as e:
-                    current_app.logger.warning(f"Image upload error: {e}")
-        
+                except Exception:
+                    pass
+                image_files.append(_save_subdivision_image_file(f))
+        _set_subdivision_images(sub, image_files)
         log_activity("sub_create", f"Subdivision created: {name} under {project.name}" + (f" — {location}" if location else ""))
         db.session.commit()
-        return jsonify({"success": True, "id": sub.id, "name": sub.name, "project_id": project.id, "project_name": project.name, "image_ids": []})
+        return jsonify({"success": True, "id": sub.id, "name": sub.name, "project_id": project.id, "project_name": project.name, "image_ids": _subdivision_images_to_list(sub)})
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Failed to create project")
@@ -2245,59 +2229,52 @@ def admin_create_subdivision():
         return jsonify(payload), 500
 
 
-@main_bp.route("/property/<int:prop_id>/image")
-def serve_property_image(prop_id):
-    """Serve property image from database (Railway-compatible)."""
-    try:
-        prop = db.session.get(Property, prop_id)
-        if not prop or not prop.image_data:
-            return "", 404
-        resp = make_response(prop.image_data)
-        resp.headers["Content-Type"] = prop.image_mimetype or "image/jpeg"
-        resp.headers["Cache-Control"] = "public, max-age=86400"
-        return resp
-    except Exception:
-        return "", 500
-
-
-@main_bp.route("/admin/subdivision-image/<int:sub_id>")
-def serve_subdivision_image(sub_id):
-    """Serve subdivision image from database (Railway-compatible)."""
-    try:
-        sub = db.session.get(Subdivision, sub_id)
-        if not sub or not sub.image_data:
-            return "", 404
-        resp = make_response(sub.image_data)
-        resp.headers["Content-Type"] = sub.image_mimetype or "image/jpeg"
-        resp.headers["Cache-Control"] = "public, max-age=86400"
-        return resp
-    except Exception:
-        return "", 500
+@main_bp.route("/admin/subdivision-image/<path:image_key>")
+def serve_subdivision_image(image_key):
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    clean_key = _resolve_upload_filename(image_key)
+    if not clean_key:
+        return "", 404
+    return send_from_directory(upload_dir, clean_key)
 
 
 # backward-compat: redirect old per-project URL to first image
 @main_bp.route("/admin/subdivision/<int:sub_id>/image")
 def subdivision_image(sub_id):
     sub = db.session.get(Subdivision, sub_id)
-    if not sub or not sub.image_data:
+    if not sub or not sub.images:
         return "", 404
-    return redirect(url_for("main.serve_subdivision_image", sub_id=sub_id))
+    return redirect(url_for("main.serve_subdivision_image", image_key=sub.images[0]))
 
 
-@main_bp.route("/admin/subdivision/<int:sub_id>/delete-image", methods=["POST"])
+@main_bp.route("/admin/subdivision-image/<path:image_key>/delete", methods=["POST"])
 @login_required
-def delete_subdivision_image(sub_id):
-    """Delete subdivision image from database."""
+def delete_subdivision_image(image_key):
     if current_user.role != "admin":
         return jsonify({"error": "Forbidden"}), 403
-    
-    sub = db.session.get(Subdivision, sub_id)
-    if not sub:
+    clean_key = _resolve_upload_filename(image_key)
+    if not clean_key:
         return jsonify({"error": "Not found"}), 404
-    
-    # Clear the image from database
-    sub.image_data = None
-    sub.image_mimetype = None
+
+    found = False
+    for sub in Subdivision.query.all():
+        imgs = _subdivision_images_to_list(sub)
+        if clean_key in imgs:
+            imgs = [name for name in imgs if name != clean_key]
+            _set_subdivision_images(sub, imgs)
+            found = True
+
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    img_path = os.path.join(upload_dir, clean_key)
+    if os.path.exists(img_path):
+        try:
+            os.remove(img_path)
+        except OSError:
+            pass
+
+    if not found:
+        return jsonify({"error": "Not found"}), 404
+
     db.session.commit()
     return jsonify({"success": True})
 
@@ -2365,22 +2342,12 @@ def admin_edit_subdivision(sub_id):
         sub.barangay_code = barangay_code or None
         sub.barangay_name = barangay_name or None
     sub.description = desc
-    
-    # Handle image upload — replace with new image or keep existing
+    current_images = _subdivision_images_to_list(sub)
     files = request.files.getlist("image_files")
     for f in files:
         if f and f.filename:
-            try:
-                f.stream.seek(0)
-                image_data, image_mimetype = _save_subdivision_image_file(f)
-                if image_data:
-                    sub.image_data = image_data
-                    sub.image_mimetype = image_mimetype
-                    break  # Replace with first new image
-            except ValueError as e:
-                current_app.logger.warning(f"Image upload skipped: {e}")
-            except Exception as e:
-                current_app.logger.warning(f"Image upload error: {e}")
+            current_images.append(_save_subdivision_image_file(f))
+    _set_subdivision_images(sub, current_images)
 
     # Ensure all models under this subdivision inherit the subdivision PSGC.
     tail_for_props = _compose_psgc_tail(
@@ -2403,7 +2370,7 @@ def admin_edit_subdivision(sub_id):
 
     log_activity("sub_edit", f"Subdivision updated: {name} under {project.name}" + (f" — {location}" if location else ""))
     db.session.commit()
-    return jsonify({"success": True, "id": sub.id, "name": sub.name, "project_id": project.id, "project_name": project.name, "image_ids": []})
+    return jsonify({"success": True, "id": sub.id, "name": sub.name, "project_id": project.id, "project_name": project.name, "image_ids": _subdivision_images_to_list(sub)})
 
 
 @main_bp.route("/admin/subdivision/<int:sub_id>/detail")
@@ -2433,7 +2400,7 @@ def admin_subdivision_detail(sub_id):
         "barangay_code": sub.barangay_code or "",
         "barangay_name": sub.barangay_name or "",
         "description": sub.description or "",
-        "image_ids": [],
+        "image_ids": _subdivision_images_to_list(sub),
     })
 
 
@@ -3074,30 +3041,18 @@ ALLOWED_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def _save_property_images(files):
-    """Extract image data from uploaded files for database storage.
-    
-    For Railway/ephemeral filesystem compatibility, images are stored 
-    in the database as BLOBs rather than on disk.
-    Returns list of tuples: (image_data, image_mimetype)
-    """
+    """Save uploaded image files; return list of saved filenames."""
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    os.makedirs(upload_dir, exist_ok=True)
     saved = []
     for f in files:
         if f and f.filename:
             ext = os.path.splitext(secure_filename(f.filename))[1].lower()
             if ext not in ALLOWED_IMG_EXTS:
                 continue
-            try:
-                payload = f.read()
-                if not payload:
-                    continue
-                # Validate file size (max 5MB per image)
-                if len(payload) > 5 * 1024 * 1024:
-                    current_app.logger.warning(f"Property image too large: {f.filename}")
-                    continue
-                saved.append((payload, f.mimetype or "image/jpeg"))
-            except Exception as e:
-                current_app.logger.warning(f"Error processing property image {f.filename}: {e}")
-                continue
+            fname = str(uuid.uuid4()) + ext
+            f.save(os.path.join(upload_dir, fname))
+            saved.append(fname)
     return saved
 
 
@@ -3253,16 +3208,12 @@ def agent_submit_property():
         bedrooms=bedrooms, bathrooms=bathrooms, storeys=storeys,
         floor_area=floor_area, lot_area=lot_area,
         description=description,
+        images=",".join(image_names) if image_names else None,
         agent_id=(assigned_agent.id if assigned_agent else None),
         subdivision_id=subdivision_id,
         status="available",
         approval_status="approved",
     )
-    # Store first image in database (Railway-compatible)
-    if image_names:
-        image_data, image_mimetype = image_names[0]
-        prop.image_data = image_data
-        prop.image_mimetype = image_mimetype
     db.session.add(prop)
     db.session.flush()
     log_activity("prop_submit", f"Property created by admin: \"{name}\"")
@@ -3455,20 +3406,20 @@ def agent_edit_property(prop_id):
 
     prop.approval_status = "approved"
 
-    # Handle image deletion (when user removes all images)
-    remove_images = request.form.getlist("remove_images")
-    if remove_images:
-        # User deleted images - clear from database
-        prop.image_data = None
-        prop.image_mimetype = None
+    # Handle image removals
+    upload_dir = current_app.config["UPLOAD_FOLDER"]
+    existing   = [x for x in (prop.images or "").split(",") if x]
+    for fname in request.form.getlist("remove_images"):
+        fname = fname.strip()
+        if fname in existing:
+            existing.remove(fname)
+            fpath = os.path.join(upload_dir, fname)
+            if os.path.exists(fpath):
+                os.remove(fpath)
 
-    # Handle image updates (database storage for Railway compatibility)
-    new_images  = _save_property_images(request.files.getlist("images"))
-    if new_images:
-        # Replace with first new image
-        image_data, image_mimetype = new_images[0]
-        prop.image_data = image_data
-        prop.image_mimetype = image_mimetype
+    new_names  = _save_property_images(request.files.getlist("images"))
+    existing.extend(new_names)
+    prop.images = ",".join(existing) if existing else None
 
     log_activity("prop_edit", f"Property updated by admin: \"{prop.name}\"")
     db.session.commit()

@@ -370,9 +370,7 @@ class Property(db.Model):
     floor_area  = db.Column(db.Float)            # sqm
     lot_area    = db.Column(db.Float)           # sqm
     description = db.Column(db.Text)
-    images      = db.Column(db.Text)            # comma-separated filenames (legacy)
-    image_data  = db.Column(db.LargeBinary(length=16777215), nullable=True)  # Database storage for Railway compatibility
-    image_mimetype = db.Column(db.String(50), nullable=True)
+    images      = db.Column(db.Text)            # comma-separated filenames
     agent_id    = db.Column(db.Integer, db.ForeignKey("users.id"))
     subdivision_id = db.Column(db.Integer, db.ForeignKey("subdivisions.id"), nullable=True)
     unit_id     = db.Column(db.String(60), nullable=True, index=True)

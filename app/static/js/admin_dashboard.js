@@ -3553,7 +3553,8 @@ function _lemShowSlide(idx) {
   _lemIdx = (idx + _lemImages.length) % _lemImages.length;
   imgEl.style.opacity = '0';
   setTimeout(function() {
-    imgEl.src = '/uploads/' + _lemImages[_lemIdx];
+    // Load image from database using property ID
+    imgEl.src = '/property/' + _editPropId + '/image';
     imgEl.style.opacity = '1';
   }, 120);
   document.querySelectorAll('#lemDots .sub-preview-dot').forEach(function(d, i) {
@@ -3646,9 +3647,8 @@ function _renderPropertyDetailsModal(prop) {
   var unit_type = (prop.unit_type || '').replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
   var project = prop.subdivision || '—';
   
-  // Get property images
-  var images = (prop.images || '').split(',').filter(function(x) { return x.trim(); });
-  var firstImage = images.length > 0 ? '/uploads/' + images[0].trim() : null;
+  // Get property images (from database)
+  var firstImage = prop.id ? '/property/' + prop.id + '/image' : null;
   var imageHtml = '<div class="pdm-image-container mb-3">'
     + (firstImage 
       ? '<img src="' + firstImage + '" alt="' + (prop.name || 'Property') + '" class="pdm-property-image" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
@@ -4544,7 +4544,8 @@ function _openAdminEditPropertyModal(d) {
   if (_lemImages.length) {
     wrap.style.display = 'block';
     holder.style.display = 'none';
-    img.src = '/uploads/' + _lemImages[0];
+    // Load image from database using property ID
+    img.src = '/property/' + _editPropId + '/image';
     img.style.opacity = '1';
     if (_lemImages.length > 1) {
       prev.classList.remove('d-none');
@@ -4577,7 +4578,7 @@ function _openAdminEditPropertyModal(d) {
     var tile = document.createElement('div');
     tile.className = 'sub-img-tile';
     tile.innerHTML =
-      '<img src="/uploads/' + _escHtml(fname) + '" class="sub-img-tile-img" alt="">'
+      '<img src="/property/' + _editPropId + '/image" class="sub-img-tile-img" alt="">'
       + '<button type="button" class="sub-img-tile-del" data-fname="' + _escHtml(fname) + '"><i class="fas fa-times"></i></button>'
       + '<input type="hidden" name="existing_img" value="' + _escHtml(fname) + '">';
     imgWrap.appendChild(tile);
@@ -5276,12 +5277,14 @@ _bind('editPropBtn', 'click', function() {
   document.querySelectorAll('#ep_images_wrap input[name="existing_img"]').forEach(function(inp) {
     fd.append('existing_images', inp.value);
   });
-  var original = (_pvmCurrentData && _pvmCurrentData.propImages ? _pvmCurrentData.propImages : '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-  var kept = [];
-  document.querySelectorAll('#ep_images_wrap input[name="existing_img"]').forEach(function(inp) { kept.push(inp.value); });
-  original.forEach(function(fname) {
-    if (kept.indexOf(fname) === -1) fd.append('remove_images', fname);
-  });
+  
+  // For database storage: if original had image ("1") but no tiles exist now, image was deleted
+  var hadOriginalImage = _pvmCurrentData && _pvmCurrentData.propImages && _pvmCurrentData.propImages.trim() !== '';
+  var hasExistingImageTile = document.querySelectorAll('#ep_images_wrap input[name="existing_img"]').length > 0;
+  if (hadOriginalImage && !hasExistingImageTile) {
+    fd.append('remove_images', '1');  // Mark for deletion (backend only checks if list is non-empty)
+  }
+  
   _pendingNewFiles.filter(Boolean).forEach(function(f) { fd.append('images', f); });
   fd.append('csrf_token', csrfToken());
 
@@ -5341,8 +5344,9 @@ _bind('editPropBtn', 'click', function() {
           locationVal = [locationVal, psgcTail].filter(Boolean).join(', ');
         }
 
-        var imagesCsv = (apiData && apiData.images) || card.dataset.propImages || '';
-        var imageList = String(imagesCsv || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+        // For database storage: store "1" if there's an image, "" if not
+        var hasImage = apiData && apiData.has_image ? "1" : "";
+        var imagesCsv = hasImage; // Keep as string for backward compatibility with card.dataset
 
         card.dataset.propName = nameVal;
         card.dataset.propSubdivision = subdivisionNameVal;
@@ -5432,7 +5436,8 @@ _bind('editPropBtn', 'click', function() {
               img.className = 'prop-card-img';
               imgWrap.insertBefore(img, imgWrap.firstChild);
             }
-            img.src = '/uploads/' + _escapeHtml(imageList[0]);
+            // Load image from database using property ID
+            img.src = '/property/' + _editPropId + '/image';
             img.alt = nameVal || 'Model';
           } else {
             if (img) img.remove();
@@ -7427,7 +7432,10 @@ var _adminPreviewType = null; // 'avatar' or 'banner'
     var dotsEl = document.getElementById('adminTrmDots');
     if (!imgEl) return;
 
-    imgEl.src = '/uploads/' + _adminTrmImages[_adminTrmIdx];
+    // Load image from database using property ID
+    if (_adminTrmPropertyId) {
+      imgEl.src = '/property/' + _adminTrmPropertyId + '/image';
+    }
     if (dotsEl) {
       dotsEl.querySelectorAll('.trm-dot').forEach(function (dot, i) {
         dot.classList.toggle('active', i === _adminTrmIdx);
@@ -7435,8 +7443,9 @@ var _adminPreviewType = null; // 'avatar' or 'banner'
     }
   }
 
-  function _adminTrmLoadImages(imagesCsv) {
+  function _adminTrmLoadImages(imagesCsv, propId) {
     _adminTrmImages = String(imagesCsv || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    _adminTrmPropertyId = propId;
     _adminTrmIdx = 0;
 
     var imgWrap = document.getElementById('adminTrmImgWrap');
@@ -7501,7 +7510,8 @@ var _adminPreviewType = null; // 'avatar' or 'banner'
 
     if (clientEl) clientEl.textContent = row.getAttribute('data-client-name') || '—';
     if (propertyEl) propertyEl.textContent = row.getAttribute('data-property-name') || '—';
-    _adminTrmLoadImages(row.getAttribute('data-property-images') || '');
+    var propId = row.getAttribute('data-property-id');
+    _adminTrmLoadImages(row.getAttribute('data-property-images') || '', propId);
     if (dateEl) {
       var isoDate = String(row.getAttribute('data-preferred-date') || '').trim();
       if (isoDate) {
@@ -8111,10 +8121,10 @@ var _pendingAcpFiles = [];
     var emptyState = document.getElementById('propEmptyState');
     if (emptyState) emptyState.remove();
 
-    var imagesCsv = String(prop.images || '');
-    var images = imagesCsv ? imagesCsv.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
-    var firstImg = images.length ? images[0] : '';
-    var imgCount = images.length;
+    // Images are now stored in database, not filesystem - always construct DB URL
+    var propId = prop.id;
+    var hasImage = true; // Assume property has image; let server 404 if not
+    var imgCount = 1; // Now showing only 1 image from DB
     var propType = String(prop.prop_type || '');
     var location = String(prop.location || '');
     var psgcTail = [
@@ -8192,11 +8202,10 @@ var _pendingAcpFiles = [];
       + ' data-prop-listing-status="' + _escapeHtml(listingStatus) + '"'
       + ' data-prop-model-key="' + _escapeHtml(modelKey) + '"'
       + ' data-prop-available-left="0"'
-      + ' data-prop-images="' + _escapeHtml(imagesCsv) + '">'
+      + ' data-prop-images="' + _escapeHtml(prop.images || '') + '">'
       + '  <div class="prop-card-img-wrap">'
-      + (firstImg
-          ? '    <img src="/uploads/' + _escapeHtml(firstImg) + '" alt="' + _escapeHtml(name) + '" class="prop-card-img">'
-          : '    <div class="prop-card-img-placeholder"><i class="fas fa-home"></i></div>')
+      + '    <img src="/property/' + _escapeHtml(propId) + '/image" alt="' + _escapeHtml(name) + '" class="prop-card-img" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">'
+      + '    <div class="prop-card-img-placeholder" style="display:none;"><i class="fas fa-home"></i></div>'
       + (imgCount > 1 ? '    <span class="prop-card-img-count"><i class="fas fa-images me-1"></i>' + imgCount + '</span>' : '')
         + '    <div class="prop-card-actions">'
         + '      <button type="button" class="sub-card-action-btn prop-view-btn-icon" title="View details"><i class="fas fa-eye"></i></button>'
