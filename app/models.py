@@ -304,8 +304,6 @@ class Subdivision(db.Model):
     barangay_name = db.Column(db.String(120))
     description = db.Column(db.Text)
     images_csv  = db.Column("images", db.Text, default="")
-    image_data  = db.Column(db.LargeBinary(length=16777215), nullable=True)
-    image_mimetype = db.Column(db.String(50), nullable=True)
     created_at  = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     project = db.relationship("Project", back_populates="subdivisions")
@@ -371,6 +369,8 @@ class Property(db.Model):
     lot_area    = db.Column(db.Float)           # sqm
     description = db.Column(db.Text)
     images      = db.Column(db.Text)            # comma-separated filenames
+    image_data  = db.Column(db.LargeBinary(length=16777215), nullable=True)  # BLOB for Railway persistence
+    image_mimetype = db.Column(db.String(50), nullable=True)  # e.g., image/jpeg
     agent_id    = db.Column(db.Integer, db.ForeignKey("users.id"))
     subdivision_id = db.Column(db.Integer, db.ForeignKey("subdivisions.id"), nullable=True)
     unit_id     = db.Column(db.String(60), nullable=True, index=True)

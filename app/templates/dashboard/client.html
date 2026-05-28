@@ -1132,7 +1132,7 @@
               </div>
               <div class="col-md-4"><label class="form-label">Birth Place</label><input id="pbBirthPlace" class="form-control buyer-icon-input" value="{{ pb.birthplace if pb and pb.birthplace else '' }}"></div>
               <div class="col-md-4"><label class="form-label">Tax Identification No (TIN)</label><input id="pbTin" class="form-control buyer-icon-input" value="{{ pb.tin_no if pb and pb.tin_no else '' }}" inputmode="numeric" maxlength="15" placeholder="000-000-000-000"></div>
-              <div class="col-md-4"><label class="form-label">Gross Monthly Income</label><input id="pbGrossIncome" type="number" min="0" step="0.01" class="form-control buyer-icon-input" value="{{ '{:,.2f}'.format(pb.gross_income|float) if pb and pb.gross_income is not none else '' }}"></div>
+              <div class="col-md-4"><label class="form-label">Gross Monthly Income</label><input id="pbGrossIncome" type="number" min="0" step="0.01" class="form-control buyer-icon-input" value="{{ '{:.2f}'.format(pb.gross_income|float) if pb and pb.gross_income is not none else '' }}"></div>
 
               <div class="col-md-4">
                 <label class="form-label">With Dependents</label>

@@ -145,6 +145,9 @@
     var provinceSel = document.getElementById(cfg.provinceSelectId);
     var citySel = document.getElementById(cfg.citySelectId);
     var brgySel = document.getElementById(cfg.barangaySelectId);
+    if (!regionSel && !provinceSel && !citySel && !brgySel) {
+      return;
+    }
     if (!regionSel || !provinceSel || !citySel || !brgySel) {
       psgcLog('warn', 'PSGC cascade selector(s) missing', {
         regionSelectId: cfg.regionSelectId,
@@ -854,7 +857,7 @@
         const name   = (col.dataset.propName || "").toLowerCase();
         const colLoc = (col.dataset.propLocation || "").toLowerCase();
         const ptype  = (col.dataset.propType || "").toLowerCase();
-        const price  = parseFloat(col.dataset.propPrice || 0);
+        const price  = parseFloat(((col.dataset.propPrice || '').replace(/,/g, '')) || 0);
         const pbeds  = parseInt(col.dataset.propBeds || 0);
         const propSubdivId = parseInt(col.dataset.propSubdivId || 0);
 
@@ -944,37 +947,74 @@
         visible++;
       });
 
-      // Reflow sorted groups
-      const allCols = Array.from(grid.querySelectorAll(".browse-card-col:not(.d-none)"));
-      const qualifiedCols = allCols.filter(c => c.dataset.groupIndex === "0");
-      const conditionalCols = allCols.filter(c => c.dataset.groupIndex === "1");
-      const notQualifiedCols = allCols.filter(c => c.dataset.groupIndex === "2");
+      // Rebuild grid deterministically using a DocumentFragment to avoid
+      // layout gaps when nodes are moved. If no loan term is selected, keep
+      // the original ordering and do not insert group dividers.
+      const visibleCols = Array.from(grid.querySelectorAll('.browse-card-col:not(.d-none)'));
 
-      // Remove existing divider blocks first
+      // Remove old divider blocks
       Array.from(grid.querySelectorAll('.browse-group-divider')).forEach(e => e.remove());
 
-      function insertDivider() {
+      // If no specific loan term is selected, keep original order
+      if (!selectedLoanTerm) {
+        // Clear existing card columns and append visibleCols in DOM order
+        Array.from(grid.querySelectorAll('.browse-card-col, .browse-group-divider')).forEach(function(n) { n.remove(); });
+        const frag = document.createDocumentFragment();
+        visibleCols.forEach(function (col) { frag.appendChild(col); });
+        grid.appendChild(frag);
+        // quick reflow
+        try { const _ = grid.offsetHeight; } catch (e) {}
+        if (noRes) noRes.classList.toggle('d-none', visible > 0);
+        return;
+      }
+
+      // Grouping path (loan term selected)
+      const qualifiedCols = visibleCols.filter(c => c.dataset.groupIndex === '0');
+      const conditionalCols = visibleCols.filter(c => c.dataset.groupIndex === '1');
+      const notQualifiedCols = visibleCols.filter(c => c.dataset.groupIndex === '2');
+
+      // Create fragment and append groups in order
+      const frag = document.createDocumentFragment();
+
+      function makeDivider() {
         const div = document.createElement('div');
         div.className = 'browse-group-divider';
         div.style.borderTop = '1px solid #ddd';
         div.style.margin = '8px 0';
-        grid.appendChild(div);
+        return div;
       }
 
-      function appendGroup(columns) {
-        columns.forEach(function(col) { grid.appendChild(col); });
+      function appendToFragment(cols) {
+        cols.forEach(function (col) { frag.appendChild(col); });
       }
 
       if (qualifiedCols.length) {
-        appendGroup(qualifiedCols);
+        appendToFragment(qualifiedCols);
       }
       if (conditionalCols.length) {
-        if (qualifiedCols.length) insertDivider();
-        appendGroup(conditionalCols);
+        if (qualifiedCols.length) frag.appendChild(makeDivider());
+        appendToFragment(conditionalCols);
       }
       if (notQualifiedCols.length) {
-        if (qualifiedCols.length || conditionalCols.length) insertDivider();
-        appendGroup(notQualifiedCols);
+        if (qualifiedCols.length || conditionalCols.length) frag.appendChild(makeDivider());
+        appendToFragment(notQualifiedCols);
+      }
+
+      // Clear existing card children (only remove card cols and dividers)
+      Array.from(grid.querySelectorAll('.browse-card-col, .browse-group-divider')).forEach(function(n) { n.remove(); });
+
+      // Append rebuilt fragment
+      grid.appendChild(frag);
+
+      // Force a layout reflow to ensure proper spacing (helps when images load lazy)
+      try {
+        grid.style.display = 'none';
+        // trigger reflow
+        // eslint-disable-next-line no-unused-vars
+        const _ = grid.offsetHeight;
+        grid.style.display = '';
+      } catch (e) {
+        // ignore
       }
 
       if (noRes) noRes.classList.toggle('d-none', visible > 0);
@@ -1329,7 +1369,13 @@
         : '';
       var profileGrossIncome = modal ? String(modal.dataset.profileGrossIncome || '').trim() : '';
       var fallbackGrossIncome = !_isBlankFieldValue(payloadGrossIncome) ? payloadGrossIncome : profileGrossIncome;
-      if (!_isBlankFieldValue(fallbackGrossIncome)) grossIncomeEl.value = String(fallbackGrossIncome);
+      if (!_isBlankFieldValue(fallbackGrossIncome)) {
+        if (String(grossIncomeEl.type || '').toLowerCase() === 'number') {
+          grossIncomeEl.value = String(fallbackGrossIncome).replace(/,/g, '');
+        } else {
+          grossIncomeEl.value = String(fallbackGrossIncome);
+        }
+      }
     }
   }
 
@@ -1349,7 +1395,11 @@
         var radio = document.querySelector('[name="' + el.name + '"][value="' + String(val).replace(/"/g, '\\"') + '"]');
         if (radio) radio.checked = true;
       } else if (val !== null && val !== undefined) {
-        el.value = String(val);
+        if (type === 'number') {
+          el.value = String(val).replace(/,/g, '');
+        } else {
+          el.value = String(val);
+        }
         if (el.id === 'pbBankName') {
           el.dataset.pendingValue = String(val || '').trim();
         }
@@ -1822,11 +1872,11 @@
       existingPayload = _buyerPayloadCacheByTrip[String(tripId)];
     }
     var unitId = card ? String(card.dataset.tripUnitId || '').trim() : '';
-    var sellingPrice = card ? parseFloat(card.dataset.tripPrice || '0') : 0;
-    var reservationFee = card ? parseFloat(card.dataset.tripReservationFee || '0') : 0;
-    var downpaymentRate = card ? parseFloat(card.dataset.tripDownpaymentRate || '0') : 0;
-    var promoDiscountRate = card ? parseFloat(card.dataset.tripPromoDiscountRate || '0') : 0;
-    var loanablePct = card ? parseFloat(card.dataset.tripLoanablePct || '0') : 0;
+    var sellingPrice = card ? parseFloat(((card.dataset.tripPrice || '0').replace(/,/g, '')) || 0) : 0;
+    var reservationFee = card ? parseFloat(((card.dataset.tripReservationFee || '0').replace(/,/g, '')) || 0) : 0;
+    var downpaymentRate = card ? parseFloat(((card.dataset.tripDownpaymentRate || '0').replace(/,/g, '')) || 0) : 0;
+    var promoDiscountRate = card ? parseFloat(((card.dataset.tripPromoDiscountRate || '0').replace(/,/g, '')) || 0) : 0;
+    var loanablePct = card ? parseFloat(((card.dataset.tripLoanablePct || '0').replace(/,/g, '')) || 0) : 0;
     var downpayment = sellingPrice > 0 && downpaymentRate > 0 ? (sellingPrice * (downpaymentRate / 100)) : 0;
     var loanAmount = sellingPrice > 0
       ? (loanablePct > 0 ? (sellingPrice * (loanablePct / 100)) : Math.max(0, sellingPrice - downpayment))
@@ -2480,7 +2530,7 @@
     var loc     = card.dataset.propLoc     || '';
     var type    = card.dataset.propType    || '';
     var unitType = card.dataset.propUnitType || '';
-    var price   = parseFloat(card.dataset.propPrice || 0);
+    var price   = parseFloat(((card.dataset.propPrice || '').replace(/,/g, '')) || 0);
     var beds    = card.dataset.propBeds;
     var baths   = card.dataset.propBaths;
     var storeys = card.dataset.propStoreys;
@@ -2504,16 +2554,16 @@
       pricingData = null;
     }
     if ((isBoughtModel || forceSold) && (!pricingData || typeof pricingData !== 'object' || !Object.keys(pricingData).length)) {
-      var basePrice = Number(card.dataset.propPrice || 0);
-      var soldPrice = Number(card.dataset.salePrice || 0);
+      var basePrice = Number(((card.dataset.propPrice || '').replace(/,/g, '')) || 0);
+      var soldPrice = Number(((card.dataset.salePrice || '').replace(/,/g, '')) || 0);
       var fallbackTotal = soldPrice > 0 ? soldPrice : basePrice;
-      var fallbackPromoRate = Number(card.dataset.propPromoDiscountRate || 0);
-      var fallbackReservationFee = Number(card.dataset.propReservationFee || 0);
-      var fallbackDownRate = Number(card.dataset.propDownpaymentRate || 0);
-      var fallbackDownMonths = Number(card.dataset.propDownpaymentTermsMonths || 0);
-      var fallbackLoanableRate = Number(card.dataset.propLoanablePercentage || 0);
-      var fallbackVatRate = Number(card.dataset.propVatRate || 0);
-      var fallbackLmfRate = Number(card.dataset.propLmfRate || 0);
+      var fallbackPromoRate = Number(((card.dataset.propPromoDiscountRate || '').replace(/,/g, '')) || 0);
+      var fallbackReservationFee = Number(((card.dataset.propReservationFee || '').replace(/,/g, '')) || 0);
+      var fallbackDownRate = Number(((card.dataset.propDownpaymentRate || '').replace(/,/g, '')) || 0);
+      var fallbackDownMonths = Number(((card.dataset.propDownpaymentTermsMonths || '').replace(/,/g, '')) || 0);
+      var fallbackLoanableRate = Number(((card.dataset.propLoanablePercentage || '').replace(/,/g, '')) || 0);
+      var fallbackVatRate = Number(((card.dataset.propVatRate || '').replace(/,/g, '')) || 0);
+      var fallbackLmfRate = Number(((card.dataset.propLmfRate || '').replace(/,/g, '')) || 0);
       var fallbackNet = fallbackTotal * (1 - (fallbackPromoRate / 100));
       var fallbackVatAmount = fallbackNet * (fallbackVatRate / 100);
       var fallbackLmfAmount = fallbackNet * (fallbackLmfRate / 100);
@@ -2629,7 +2679,28 @@
     var detailHtml = '';
     detailHtml += pvmField('Model Type', titleCase(type));
     detailHtml += pvmField('Unit Type', titleCase(unitType));
-    detailHtml += pvmField('TCP', price ? '₱' + price.toLocaleString('en-PH', {maximumFractionDigits:0}) : '—');
+    // Prefer server-provided computed total_contract_price, fall back to
+    // pricingData calculation or raw price when not available.
+    var displayTcp = null;
+    if (pricingData && isFinite(Number(pricingData.total_contract_price))) {
+      displayTcp = Number(pricingData.total_contract_price);
+    } else if (typeof pricingData === 'object' && pricingData !== null && isFinite(Number(pricingData.tcp))) {
+      displayTcp = Number(pricingData.tcp);
+    } else if (typeof pricingData === 'object' && pricingData !== null && isFinite(Number(pricingData.total_selling_price))) {
+      // compute fallback: net selling + vat + lmf
+      var _promo = Number(pricingData.promo_discount_rate || 0);
+      var _vat = Number(pricingData.vat_rate || 0);
+      var _lmf = Number(pricingData.lmf_rate || 0);
+      var _sell = Number(pricingData.total_selling_price || price || 0);
+      var _promoAmount = _sell * (_promo / 100);
+      var _net = Math.max(_sell - _promoAmount, 0);
+      var _vatAmount = _net * (_vat / 100);
+      var _lmfAmount = _net * (_lmf / 100);
+      displayTcp = _net + _vatAmount + _lmfAmount;
+    } else {
+      displayTcp = price || 0;
+    }
+    detailHtml += pvmField('TCP', displayTcp ? '₱' + displayTcp.toLocaleString('en-PH', {maximumFractionDigits:0}) : '—');
     detailHtml += pvmField('Project', subdivision || '—');
     detailHtml += pvmField('Listing Status', status ? titleCase(status) : '—');
     detailHtml += pvmField(isBoughtModel ? 'Date Sold' : 'Date Added', isBoughtModel ? (dateSold || '—') : (dateAdded || '—'));
@@ -2724,7 +2795,7 @@
 
       if ((!requiredIncome || requiredIncome <= 0) && card && card !== sourceCol) {
         var altCamelKey = 'reqIncome' + term;
-        requiredIncome = parseFloat(card.dataset[altCamelKey] || 0);
+        requiredIncome = parseFloat(((card.dataset[altCamelKey] || '').replace(/,/g, '')) || 0);
         if (!requiredIncome || requiredIncome <= 0) {
           requiredIncome = parseFloat(card.getAttribute('data-req-income-' + term) || 0);
         }

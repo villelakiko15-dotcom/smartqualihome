@@ -950,7 +950,7 @@
               <label class="sqh-form-label">Total Selling Price (&#8369;) <span class="text-danger">*</span></label>
               <div class="input-group sqh-input-group">
                 <span class="input-group-text sqh-ig-text"><i class="fas fa-coins"></i></span>
-                <input type="number" id="ep_price" class="form-control sqh-form-control" min="0" step="0.01" placeholder="0.00">
+                <input type="text" id="ep_price" class="form-control sqh-form-control" placeholder="0.00">
               </div>
             </div>
             <div class="col-md-6">
@@ -965,7 +965,7 @@
               <label class="sqh-form-label">Reservation Fee (&#8369;) <span class="text-danger">*</span></label>
               <div class="input-group sqh-input-group">
                 <span class="input-group-text sqh-ig-text"><i class="fas fa-receipt"></i></span>
-                <input type="number" id="ep_reservation_fee" class="form-control sqh-form-control" min="0" step="0.01" placeholder="0">
+                <input type="text" id="ep_reservation_fee" class="form-control sqh-form-control" placeholder="0.00">
               </div>
             </div>
             <div class="col-md-6">
@@ -2142,7 +2142,7 @@
               <label class="sqh-form-label">Total Selling Price (&#8369;) <span class="text-danger">*</span></label>
               <div class="input-group sqh-input-group">
                 <span class="input-group-text sqh-ig-text"><i class="fas fa-coins"></i></span>
-                <input type="number" id="acp_price" class="form-control sqh-form-control" min="0" step="0.01" placeholder="0.00">
+                <input type="text" id="acp_price" class="form-control sqh-form-control" placeholder="0.00">
               </div>
             </div>
             <div class="col-md-6">
@@ -2157,7 +2157,7 @@
               <label class="sqh-form-label">Reservation Fee (&#8369;) <span class="text-danger">*</span></label>
               <div class="input-group sqh-input-group">
                 <span class="input-group-text sqh-ig-text"><i class="fas fa-receipt"></i></span>
-                <input type="number" id="acp_reservation_fee" class="form-control sqh-form-control" min="0" step="0.01" placeholder="0">
+                <input type="text" id="acp_reservation_fee" class="form-control sqh-form-control" placeholder="0.00">
               </div>
             </div>
             <div class="col-md-6">
@@ -2698,7 +2698,7 @@
                  data-prop-unit-id="{{ p.unit_id or '' }}"
                  data-prop-type="{{ p.prop_type or '' }}"
                  data-prop-unit-type="{{ p.unit_type or '' }}"
-                 data-prop-price="{{ '{:,.0f}'.format(p.price) }}"
+                 data-prop-price="{{ p.price }}"
                  data-prop-promo-discount-rate="{{ p.promo_discount_rate if p.promo_discount_rate is not none else 0 }}"
                  data-prop-reservation-fee="{{ p.reservation_fee if p.reservation_fee is not none else 0 }}"
                  data-prop-downpayment-rate="{{ p.downpayment_rate if p.downpayment_rate is not none else 0 }}"

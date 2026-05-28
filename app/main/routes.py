@@ -2264,6 +2264,13 @@ def delete_subdivision_image(image_key):
             _set_subdivision_images(sub, imgs)
             found = True
 
+    for proj in Project.query.all():
+        imgs = list(proj.images or [])
+        if clean_key in imgs:
+            imgs = [name for name in imgs if name != clean_key]
+            proj.images = imgs
+            found = True
+
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     img_path = os.path.join(upload_dir, clean_key)
     if os.path.exists(img_path):
@@ -2286,6 +2293,62 @@ def serve_upload(filename):
     if not clean_name:
         return "", 404
     return send_from_directory(upload_dir, clean_name)
+
+
+# ── Property Image Serving (Works on both localhost and Railway) ────────────
+
+@main_bp.route("/property/<int:prop_id>/image")
+def serve_property_image(prop_id):
+    """
+    Serve property image.
+    On Railway: serves from database BLOB
+    On localhost: serves from /uploads/ filesystem
+    """
+    from flask import send_file
+    from io import BytesIO
+    import sys
+    
+    print(f"[DEBUG] serve_property_image called with prop_id={prop_id}", file=sys.stderr)
+    
+    prop = db.session.get(Property, prop_id)
+    if not prop:
+        print(f"[DEBUG] Property {prop_id} not found", file=sys.stderr)
+        return "", 404
+    
+    print(f"[DEBUG] Property {prop_id} found: {prop.name}", file=sys.stderr)
+    
+    is_railway = os.environ.get("RAILWAY_ENVIRONMENT_NAME") is not None
+    print(f"[DEBUG] is_railway={is_railway}", file=sys.stderr)
+    
+    # Try BLOB first (Railway)
+    if is_railway and prop.image_data:
+        print(f"[DEBUG] Serving from BLOB", file=sys.stderr)
+        return send_file(
+            BytesIO(prop.image_data),
+            mimetype=prop.image_mimetype or "image/jpeg",
+            as_attachment=False
+        )
+    
+    # Fallback to filesystem (localhost)
+    print(f"[DEBUG] prop.images={prop.images}", file=sys.stderr)
+    if prop.images:
+        first_img = (prop.images or "").split(",")[0].strip()
+        print(f"[DEBUG] first_img={first_img}", file=sys.stderr)
+        if first_img:
+            # Always use absolute path to instance/uploads
+            upload_dir = os.path.abspath(os.path.join(os.getcwd(), "instance", "uploads"))
+            print(f"[DEBUG] upload_dir={upload_dir}", file=sys.stderr)
+            clean_name = _resolve_upload_filename(first_img)
+            print(f"[DEBUG] clean_name={clean_name}", file=sys.stderr)
+            file_path = os.path.join(upload_dir, clean_name)
+            print(f"[DEBUG] file_path={file_path}", file=sys.stderr)
+            print(f"[DEBUG] file exists={os.path.exists(file_path)}", file=sys.stderr)
+            if clean_name and os.path.exists(file_path):
+                print(f"[DEBUG] Serving from filesystem: {clean_name}", file=sys.stderr)
+                return send_file(file_path)
+    
+    print(f"[DEBUG] Returning 404", file=sys.stderr)
+    return "", 404
 
 
 @main_bp.route("/admin/subdivision/<int:sub_id>/edit", methods=["POST"])
@@ -3040,19 +3103,52 @@ def admin_backup_db():
 ALLOWED_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
-def _save_property_images(files):
-    """Save uploaded image files; return list of saved filenames."""
-    upload_dir = current_app.config["UPLOAD_FOLDER"]
-    os.makedirs(upload_dir, exist_ok=True)
+def _get_mime_type(ext: str) -> str:
+    """Get MIME type from file extension."""
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif"
+    }
+    return mime_map.get(ext, "image/jpeg")
+
+
+def _save_property_images(files, prop_obj=None):
+    """
+    Save uploaded images - filesystem for localhost, BLOB for Railway.
+    On Railway: saves first image as BLOB in prop_obj.image_data
+    Always returns list of filenames for database storage.
+    """
     saved = []
+    is_railway = os.environ.get("RAILWAY_ENVIRONMENT_NAME") is not None  # Railway sets this
+    
     for f in files:
-        if f and f.filename:
-            ext = os.path.splitext(secure_filename(f.filename))[1].lower()
-            if ext not in ALLOWED_IMG_EXTS:
-                continue
-            fname = str(uuid.uuid4()) + ext
+        if not f or not f.filename:
+            continue
+            
+        ext = os.path.splitext(secure_filename(f.filename))[1].lower()
+        if ext not in ALLOWED_IMG_EXTS:
+            continue
+        
+        fname = str(uuid.uuid4()) + ext
+        mime_type = _get_mime_type(ext)
+        
+        if is_railway and prop_obj:
+            # Railway: store first image as BLOB
+            image_bytes = f.read()
+            if image_bytes and not prop_obj.image_data:
+                prop_obj.image_data = image_bytes
+                prop_obj.image_mimetype = mime_type
+        else:
+            # Localhost: save to filesystem
+            upload_dir = current_app.config["UPLOAD_FOLDER"]
+            os.makedirs(upload_dir, exist_ok=True)
             f.save(os.path.join(upload_dir, fname))
-            saved.append(fname)
+        
+        saved.append(fname)
+    
     return saved
 
 
@@ -3146,7 +3242,6 @@ def agent_submit_property():
         return jsonify({"error": f"Invalid numeric field: {exc}"}), 400
 
     description  = (request.form.get("description") or "").strip()
-    image_names  = _save_property_images(request.files.getlist("images"))
 
     subdivision = db.session.get(Subdivision, subdivision_id) if subdivision_id else None
     if subdivision_id and not subdivision:
@@ -3208,7 +3303,7 @@ def agent_submit_property():
         bedrooms=bedrooms, bathrooms=bathrooms, storeys=storeys,
         floor_area=floor_area, lot_area=lot_area,
         description=description,
-        images=",".join(image_names) if image_names else None,
+        images=None,  # Set after saving images
         agent_id=(assigned_agent.id if assigned_agent else None),
         subdivision_id=subdivision_id,
         status="available",
@@ -3216,6 +3311,11 @@ def agent_submit_property():
     )
     db.session.add(prop)
     db.session.flush()
+    
+    # Save images (now that prop has an ID for BLOB storage if needed)
+    image_names = _save_property_images(request.files.getlist("images"), prop)
+    prop.images = ",".join(image_names) if image_names else None
+    
     log_activity("prop_submit", f"Property created by admin: \"{name}\"")
     db.session.commit()
     
@@ -3409,15 +3509,23 @@ def agent_edit_property(prop_id):
     # Handle image removals
     upload_dir = current_app.config["UPLOAD_FOLDER"]
     existing   = [x for x in (prop.images or "").split(",") if x]
+    is_railway = os.environ.get("RAILWAY_ENVIRONMENT_NAME") is not None
+    
     for fname in request.form.getlist("remove_images"):
         fname = fname.strip()
         if fname in existing:
             existing.remove(fname)
+            # Remove from filesystem (localhost)
             fpath = os.path.join(upload_dir, fname)
             if os.path.exists(fpath):
                 os.remove(fpath)
+    
+    # If all images removed and on Railway, clear BLOB
+    if not existing and is_railway:
+        prop.image_data = None
+        prop.image_mimetype = None
 
-    new_names  = _save_property_images(request.files.getlist("images"))
+    new_names  = _save_property_images(request.files.getlist("images"), prop)
     existing.extend(new_names)
     prop.images = ",".join(existing) if existing else None
 

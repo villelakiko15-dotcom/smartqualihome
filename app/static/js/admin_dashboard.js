@@ -5,6 +5,55 @@
 // Guard helper — silently skips addEventListener when the element is absent
 // (admin_dashboard.js is shared with client & agent dashboards which lack admin-only DOM nodes)
 function _bind(id, evt, fn) { var el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
+
+function _setupCurrencyInput(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  
+  // Force change type to text to allow comma inputs and selection range
+  if (el.type === 'number') {
+    el.type = 'text';
+  }
+  
+  el.addEventListener('input', function(e) {
+    var cursorStart = el.selectionStart || 0;
+    var originalLength = el.value.length;
+
+    var rawVal = el.value.replace(/[^0-9.]/g, '');
+    var parts = rawVal.split('.');
+    if (parts.length > 2) {
+      parts = [parts[0], parts.slice(1).join('')];
+    }
+    if (parts[0]) {
+      var num = parseInt(parts[0], 10);
+      if (!isNaN(num)) {
+        parts[0] = num.toLocaleString('en-US');
+      }
+    }
+    var newVal = parts.join('.');
+    el.value = newVal;
+
+    var newLength = newVal.length;
+    var diff = newLength - originalLength;
+    var newCursorPos = Math.max(0, cursorStart + diff);
+    
+    // Safety check just in case the browser complains
+    try {
+      el.setSelectionRange(newCursorPos, newCursorPos);
+    } catch (err) {}
+  });
+
+  el.addEventListener('blur', function(e) {
+    var val = e.target.value.replace(/,/g, '');
+    if (val && !isNaN(parseFloat(val))) {
+      e.target.value = parseFloat(val).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+  });
+}
+
 function csrfToken() { var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.content : ''; }
 function parseApiResponse(response) {
   return response.text().then(function(text) {
@@ -138,6 +187,11 @@ function _updateFullPricingBreakdown(prefix) {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
+
+  _setupCurrencyInput('acp_price');
+  _setupCurrencyInput('acp_reservation_fee');
+  _setupCurrencyInput('ep_price');
+  _setupCurrencyInput('ep_reservation_fee');
 
   function hardenAddressAutofill(ids) {
     (ids || []).forEach(function(id) {
@@ -1595,6 +1649,7 @@ function _syncProjectNameToSubdivisionCards(projectId, projectName) {
 }
 
 var _pendingProjFiles = [];
+var _projEditDeleteQueue = [];
 
 _bind('projImagesWrap', 'click', function(e) {
   var btn = e.target.closest('.sub-img-tile-del');
@@ -1603,6 +1658,9 @@ _bind('projImagesWrap', 'click', function(e) {
   var idx = tile ? tile.dataset.newIdx : null;
   if (idx !== null && idx !== undefined) {
     _pendingProjFiles[parseInt(idx, 10)] = null;
+  } else {
+    var imgId = String(btn.dataset.imgId || '');
+    if (imgId) _projEditDeleteQueue.push(imgId);
   }
   if (tile) tile.remove();
   var fnEl = document.getElementById('projImagesFilenames');
@@ -2249,7 +2307,10 @@ function _openProjectEditModal(projectId) {
         (data.image_ids || []).forEach(function(imgId) {
           var tile = document.createElement('div');
           tile.className = 'sub-img-tile';
-          tile.innerHTML = '<img src="/admin/subdivision-image/' + encodeURIComponent(imgId) + '" class="sub-img-tile-img" alt="">';
+          tile.dataset.imgId = imgId;
+          tile.innerHTML = 
+            '<img src="/admin/subdivision-image/' + encodeURIComponent(imgId) + '" class="sub-img-tile-img" alt="">' +
+            '<button type="button" class="sub-img-tile-del" data-img-id="' + imgId + '" title="Remove"><i class="fas fa-times"></i></button>';
           wrap.appendChild(tile);
         });
       }
@@ -2304,20 +2365,26 @@ _bind('addProjectSubmitBtn', 'click', function() {
   }
 
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Creating…';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> ' + (_activeProjectEditId ? 'Saving…' : 'Creating…');
 
-  var fd = new FormData();
-  fd.append('name', name);
-  fd.append('description', (document.getElementById('projDescription').value || '').trim());
+  var deletePromises = _projEditDeleteQueue.map(function(imgId) {
+    return fetch('/admin/subdivision-image/' + encodeURIComponent(imgId) + '/delete', { method: 'POST', headers: { 'X-CSRFToken': csrfToken() } });
+  });
 
-  _pendingProjFiles.filter(Boolean).forEach(function(f) { fd.append('image_files', f); });
-  fd.append('csrf_token', csrfToken());
+  Promise.all(deletePromises).then(function() {
+    var fd = new FormData();
+    fd.append('name', name);
+    fd.append('description', (document.getElementById('projDescription').value || '').trim());
 
-  var endpoint = _activeProjectEditId
-    ? ('/admin/project/' + encodeURIComponent(_activeProjectEditId) + '/edit')
-    : '/admin/project/create';
+    _pendingProjFiles.filter(Boolean).forEach(function(f) { fd.append('image_files', f); });
+    fd.append('csrf_token', csrfToken());
 
-  fetch(endpoint, { method: 'POST', body: fd })
+    var endpoint = _activeProjectEditId
+      ? ('/admin/project/' + encodeURIComponent(_activeProjectEditId) + '/edit')
+      : '/admin/project/create';
+
+    return fetch(endpoint, { method: 'POST', body: fd });
+  })
     .then(parseApiResponse)
     .then(function(res) {
       btn.disabled = false;
@@ -2331,6 +2398,7 @@ _bind('addProjectSubmitBtn', 'click', function() {
         }
         return;
       }
+      _projEditDeleteQueue = [];
       var projectPayload = {
         id: res.data.id,
         name: res.data.name || name,
@@ -3435,6 +3503,19 @@ var _lemIdx = 0;
 var _editPropId = null;
 var _pendingNewFiles = [];
 var _pvmCurrentData = null;
+
+// After a successful edit or view, always refresh _lemImages from the backend
+function _refreshLemImages(propId) {
+  fetch('/api/admin/property/' + encodeURIComponent(propId))
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok && data.data) {
+        _lemImages = (data.data.propImages || '').split(',').map(s => s.trim()).filter(Boolean);
+        // Optionally, re-render the modal images here if needed
+      }
+    });
+}
+// Example usage: call _refreshLemImages(_editPropId) after edit/view
 var _pendingDetailsState = { propertyId: null, propertyName: '', action: null, requestId: null, historyId: null };
 var _purchaseListState = { propertyId: null, propertyName: '', rows: [] };
 var _purchaseFormViewState = { tripId: null, row: null };
@@ -3553,8 +3634,7 @@ function _lemShowSlide(idx) {
   _lemIdx = (idx + _lemImages.length) % _lemImages.length;
   imgEl.style.opacity = '0';
   setTimeout(function() {
-    // Load image from database using property ID
-    imgEl.src = '/property/' + _editPropId + '/image';
+    imgEl.src = '/uploads/' + _lemImages[_lemIdx];
     imgEl.style.opacity = '1';
   }, 120);
   document.querySelectorAll('#lemDots .sub-preview-dot').forEach(function(d, i) {
@@ -3647,7 +3727,8 @@ function _renderPropertyDetailsModal(prop) {
   var unit_type = (prop.unit_type || '').replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
   var project = prop.subdivision || '—';
   
-  // Get property images (from database)
+  // Get property images 
+  var propImages = (prop.propImages || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
   var firstImage = prop.id ? '/property/' + prop.id + '/image' : null;
   var imageHtml = '<div class="pdm-image-container mb-3">'
     + (firstImage 
@@ -4498,9 +4579,15 @@ function _openAdminEditPropertyModal(d) {
   setVal('ep_barangay_name', d.propBarangayName || '');
   document.getElementById('ep_prop_type').value = d.propType || '';
   document.getElementById('ep_unit_type').value = d.propUnitType || '';
-  document.getElementById('ep_price').value = (d.propPrice || '').toString().replace(/,/g, '');
+  
+  var initPrice = (d.propPrice || '').toString().replace(/,/g, '');
+  document.getElementById('ep_price').value = initPrice ? parseFloat(initPrice).toFixed(2) : '';
+  
   document.getElementById('ep_promo_discount_rate').value = cleanNumericText(d.propPromoDiscountRate, '0');
-  document.getElementById('ep_reservation_fee').value = cleanNumericText(d.propReservationFee, '0');
+  
+  var initRes = cleanNumericText(d.propReservationFee, '0');
+  document.getElementById('ep_reservation_fee').value = initRes ? parseFloat(initRes).toFixed(2) : '';
+  
   document.getElementById('ep_downpayment_rate').value = cleanNumericText(d.propDownpaymentRate, '0');
   document.getElementById('ep_downpayment_terms_months').value = cleanNumericText(d.propDownpaymentTermsMonths, '0');
   document.getElementById('ep_loanable_percentage').value = cleanNumericText(d.propLoanablePercentage, '0');
@@ -4544,8 +4631,7 @@ function _openAdminEditPropertyModal(d) {
   if (_lemImages.length) {
     wrap.style.display = 'block';
     holder.style.display = 'none';
-    // Load image from database using property ID
-    img.src = '/property/' + _editPropId + '/image';
+    img.src = '/uploads/' + _lemImages[0];
     img.style.opacity = '1';
     if (_lemImages.length > 1) {
       prev.classList.remove('d-none');
@@ -4578,7 +4664,7 @@ function _openAdminEditPropertyModal(d) {
     var tile = document.createElement('div');
     tile.className = 'sub-img-tile';
     tile.innerHTML =
-      '<img src="/property/' + _editPropId + '/image" class="sub-img-tile-img" alt="">'
+      '<img src="/uploads/' + fname + '" class="sub-img-tile-img" alt="">'
       + '<button type="button" class="sub-img-tile-del" data-fname="' + _escHtml(fname) + '"><i class="fas fa-times"></i></button>'
       + '<input type="hidden" name="existing_img" value="' + _escHtml(fname) + '">';
     imgWrap.appendChild(tile);
@@ -5230,7 +5316,7 @@ _bind('editPropBtn', 'click', function() {
   var fallbackLine = siteNotesEl ? (siteNotesEl.value || '').trim() : '';
   var location = (document.getElementById('ep_location').value || '').trim() || fallbackLine;
   var unitType = (document.getElementById('ep_unit_type').value || '').trim();
-  var price = (document.getElementById('ep_price').value || '').trim();
+  var price = (document.getElementById('ep_price').value || '').replace(/,/g, '').trim();
   if (!name || !unitId || !unitType || !price) {
     if (errEl) {
       errEl.textContent = 'Name, unit ID, unit type, and price are required.';
@@ -5259,7 +5345,7 @@ _bind('editPropBtn', 'click', function() {
   fd.append('unit_type', unitType);
   fd.append('price', price);
   fd.append('promo_discount_rate', document.getElementById('ep_promo_discount_rate').value || '0');
-  fd.append('reservation_fee', document.getElementById('ep_reservation_fee').value || '0');
+  fd.append('reservation_fee', (document.getElementById('ep_reservation_fee').value || '0').replace(/,/g, ''));
   fd.append('downpayment_rate', document.getElementById('ep_downpayment_rate').value || '0');
   fd.append('downpayment_terms_months', document.getElementById('ep_downpayment_terms_months').value || '0');
   fd.append('loanable_percentage', document.getElementById('ep_loanable_percentage').value || '0');
@@ -5274,16 +5360,25 @@ _bind('editPropBtn', 'click', function() {
   fd.append('subdivision_id', document.getElementById('ep_subdivision').value || '');
   fd.append('unit_id', document.getElementById('ep_unit_id').value || '');
   fd.append('description', document.getElementById('ep_description').value || '');
-  document.querySelectorAll('#ep_images_wrap input[name="existing_img"]').forEach(function(inp) {
+  
+  // Track existing images
+  var existingImageInputs = document.querySelectorAll('#ep_images_wrap input[name="existing_img"]');
+  var currentExistingImages = [];
+  existingImageInputs.forEach(function(inp) {
     fd.append('existing_images', inp.value);
+    currentExistingImages.push(inp.value);
   });
   
-  // For database storage: if original had image ("1") but no tiles exist now, image was deleted
-  var hadOriginalImage = _pvmCurrentData && _pvmCurrentData.propImages && _pvmCurrentData.propImages.trim() !== '';
-  var hasExistingImageTile = document.querySelectorAll('#ep_images_wrap input[name="existing_img"]').length > 0;
-  if (hadOriginalImage && !hasExistingImageTile) {
-    fd.append('remove_images', '1');  // Mark for deletion (backend only checks if list is non-empty)
-  }
+  // Calculate removed images by comparing original vs current
+  var originalImages = _lemImages || [];  // Original filenames from modal load
+  var removedImages = originalImages.filter(function(fname) {
+    return currentExistingImages.indexOf(fname) === -1;
+  });
+  
+  // Send each removed image filename to backend
+  removedImages.forEach(function(fname) {
+    fd.append('remove_images', fname);
+  });
   
   _pendingNewFiles.filter(Boolean).forEach(function(f) { fd.append('images', f); });
   fd.append('csrf_token', csrfToken());
@@ -5294,8 +5389,9 @@ _bind('editPropBtn', 'click', function() {
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-save me-1"></i> Save Changes';
       if (!res.ok || !res.data || res.data.error) {
+        console.error('Save property (edit) failed:', res.status, res.data);
         if (errEl) {
-          errEl.textContent = (res.data && res.data.error) || 'Failed to save property.';
+          errEl.textContent = (res.data && res.data.error) || ('Failed to save property (status ' + (res.status || 'unknown') + ').');
           errEl.classList.remove('d-none');
         }
         return;
@@ -5344,9 +5440,17 @@ _bind('editPropBtn', 'click', function() {
           locationVal = [locationVal, psgcTail].filter(Boolean).join(', ');
         }
 
-        // For database storage: store "1" if there's an image, "" if not
-        var hasImage = apiData && apiData.has_image ? "1" : "";
-        var imagesCsv = hasImage; // Keep as string for backward compatibility with card.dataset
+        var imageList = [];
+        if (apiData && apiData.images) {
+          imageList = apiData.images.split(',').filter(Boolean);
+        } else {
+          var existingInputs = document.querySelectorAll('#ep_images_wrap input[name="existing_img"]');
+          existingInputs.forEach(function(inp) { imageList.push(inp.value); });
+          if (typeof _pendingNewFiles !== 'undefined' && Array.isArray(_pendingNewFiles)) {
+            _pendingNewFiles.forEach(function(f) { if (f) imageList.push(f.name); });
+          }
+        }
+        var imagesCsv = imageList.join(',');
 
         card.dataset.propName = nameVal;
         card.dataset.propSubdivision = subdivisionNameVal;
@@ -5366,7 +5470,7 @@ _bind('editPropBtn', 'click', function() {
         card.dataset.propLotNo = (document.getElementById('ep_lot_no').value || '').trim();
         card.dataset.propUnitId = unitIdVal;
         card.dataset.propUnitType = unitTypeVal;
-        card.dataset.propPrice = priceVal.toLocaleString('en-PH', { maximumFractionDigits: 0 });
+        card.dataset.propPrice = String(priceVal);
         card.dataset.propBedrooms = (document.getElementById('ep_bedrooms').value || '').trim();
         card.dataset.propBathrooms = (document.getElementById('ep_bathrooms').value || '').trim();
         card.dataset.propStoreys = (document.getElementById('ep_storeys').value || '').trim();
@@ -5436,8 +5540,7 @@ _bind('editPropBtn', 'click', function() {
               img.className = 'prop-card-img';
               imgWrap.insertBefore(img, imgWrap.firstChild);
             }
-            // Load image from database using property ID
-            img.src = '/property/' + _editPropId + '/image';
+            img.src = '/property/' + _editPropId + '/image?t=' + new Date().getTime();
             img.alt = nameVal || 'Model';
           } else {
             if (img) img.remove();
@@ -5464,11 +5567,12 @@ _bind('editPropBtn', 'click', function() {
         })
         .catch(function () {});
     })
-    .catch(function() {
+    .catch(function(err) {
+      console.error('Error saving property (edit):', err);
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-save me-1"></i> Save Changes';
       if (errEl) {
-        errEl.textContent = 'Network error while saving property.';
+        errEl.textContent = 'Network error while saving property: ' + (err && err.message ? err.message : 'Please check your connection.');
         errEl.classList.remove('d-none');
       }
     });
@@ -7432,9 +7536,8 @@ var _adminPreviewType = null; // 'avatar' or 'banner'
     var dotsEl = document.getElementById('adminTrmDots');
     if (!imgEl) return;
 
-    // Load image from database using property ID
-    if (_adminTrmPropertyId) {
-      imgEl.src = '/property/' + _adminTrmPropertyId + '/image';
+    if (_adminTrmImages.length) {
+      imgEl.src = '/uploads/' + _adminTrmImages[_adminTrmIdx];
     }
     if (dotsEl) {
       dotsEl.querySelectorAll('.trm-dot').forEach(function (dot, i) {
@@ -8310,7 +8413,7 @@ var _pendingAcpFiles = [];
     var lotNo = val('acp_lot_no');
     var propType = val('acp_type');
     var unitId = val('acp_unit_id');
-    var price = val('acp_price');
+    var price = val('acp_price').replace(/,/g, '');
     var unitType = val('acp_unit_type');
 
     if (!name || !unitId || !location || !propType || !unitType || !price) {
@@ -8343,7 +8446,7 @@ var _pendingAcpFiles = [];
     fd.append('unit_type', unitType);
     fd.append('price', price);
     fd.append('promo_discount_rate', val('acp_promo_discount_rate') || '0');
-    fd.append('reservation_fee', val('acp_reservation_fee') || '0');
+    fd.append('reservation_fee', val('acp_reservation_fee').replace(/,/g, '') || '0');
     fd.append('downpayment_rate', val('acp_downpayment_rate') || '0');
     fd.append('downpayment_terms_months', val('acp_downpayment_terms_months') || '0');
     fd.append('loanable_percentage', val('acp_loanable_percentage') || '0');
@@ -8386,6 +8489,7 @@ var _pendingAcpFiles = [];
         btn.innerHTML = '<i class="fas fa-plus me-1"></i> Add Property';
 
         if (!res.ok || !res.data || !res.data.success) {
+          console.error('Create property failed:', res.status, res.data);
           if (res.status === 413) {
             var sizeMsg = 'Image upload is too large. Please use smaller photo files and try again.';
             if (errEl) {
@@ -8396,7 +8500,8 @@ var _pendingAcpFiles = [];
             return;
           }
           if (errEl) {
-            errEl.textContent = (res.data && res.data.error) || 'Failed to create property.';
+            var serverMsg = (res.data && res.data.error) || ('Server error while creating property (status ' + (res.status || 'unknown') + '). See console for details.');
+            errEl.textContent = serverMsg;
             errEl.classList.remove('d-none');
           }
           return;
@@ -8416,7 +8521,7 @@ var _pendingAcpFiles = [];
           unit_type: unitType,
           price: parseFloat(price || '0') || 0,
           promo_discount_rate: parseFloat(val('acp_promo_discount_rate') || '0') || 0,
-          reservation_fee: parseFloat(val('acp_reservation_fee') || '0') || 0,
+          reservation_fee: parseFloat(val('acp_reservation_fee').replace(/,/g, '') || '0') || 0,
           downpayment_rate: parseFloat(val('acp_downpayment_rate') || '0') || 0,
           downpayment_terms_months: parseInt(val('acp_downpayment_terms_months') || '0', 10) || 0,
           loanable_percentage: parseFloat(val('acp_loanable_percentage') || '0') || 0,
@@ -8437,11 +8542,12 @@ var _pendingAcpFiles = [];
           images: ''
         });
       })
-      .catch(function () {
+      .catch(function (err) {
+        console.error('Error creating property:', err);
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-plus me-1"></i> Add Property';
         if (errEl) {
-          errEl.textContent = 'Network error. Please try again.';
+          errEl.textContent = 'Network error while creating property: ' + (err && err.message ? err.message : 'Please try again.');
           errEl.classList.remove('d-none');
         }
       });

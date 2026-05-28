@@ -707,8 +707,8 @@ function openEditPropertyModal(propId) {
   var beds    = card.dataset.bedrooms  || '0';
   var baths   = card.dataset.bathrooms || '0';
   var storeys = card.dataset.storeys   || '1';
-  var floorA  = parseFloat(card.dataset.floorArea || 0);
-  var lotA    = parseFloat(card.dataset.lotArea || 0);
+  var floorA  = parseFloat(((card.dataset.floorArea || '').replace(/,/g, '')) || 0);
+  var lotA    = parseFloat(((card.dataset.lotArea || '').replace(/,/g, '')) || 0);
   if (parseInt(beds)    > 0) chips += '<span class="pvm-icon-chip"><i class="fas fa-bed me-1"></i>' + beds + ' Bed' + (parseInt(beds) > 1 ? 's' : '') + '</span>';
   if (parseInt(baths)   > 0) chips += '<span class="pvm-icon-chip"><i class="fas fa-bath me-1"></i>' + baths + ' Bath' + (parseInt(baths) > 1 ? 's' : '') + '</span>';
   if (parseInt(storeys) > 1) chips += '<span class="pvm-icon-chip"><i class="fas fa-layer-group me-1"></i>' + storeys + ' Storey' + (parseInt(storeys) > 1 ? 's' : '') + '</span>';

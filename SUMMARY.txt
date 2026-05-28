@@ -244,3 +244,10 @@ How to test:
 - Then log in as each client and run the qualification engine.
 - Compare computed DTI and similarity scores to expected outcomes.
 - Use the Admin dashboard property list to verify model appears with status approved and valid unit_id.
+
+
+
+need ilagay:
+
+ALTER TABLE properties ADD COLUMN image_data LONGBLOB NULL;
+ALTER TABLE properties ADD COLUMN image_mimetype VARCHAR(50) NULL;
