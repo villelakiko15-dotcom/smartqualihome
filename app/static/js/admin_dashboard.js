@@ -962,6 +962,27 @@ entriesEl.innerHTML = rows.map(function (row) {
 /* ── Admin: user detail modal + account toggle ──────────────── */
 var _udmUserId = null;
 
+function _bringModalToFront(modalEl) {
+  var openModals = Array.from(document.querySelectorAll('.modal.show'));
+  var maxModalZ = 1055;
+  openModals.forEach(function(el) {
+    if (el === modalEl) return;
+    var z = parseInt(window.getComputedStyle(el).zIndex, 10);
+    if (!isNaN(z)) maxModalZ = Math.max(maxModalZ, z);
+  });
+  modalEl.style.zIndex = String(maxModalZ + 20);
+
+  var backdrops = Array.from(document.querySelectorAll('.modal-backdrop'));
+  if (backdrops.length) {
+    var maxBackdropZ = 1040;
+    backdrops.forEach(function(el) {
+      var z = parseInt(window.getComputedStyle(el).zIndex, 10);
+      if (!isNaN(z)) maxBackdropZ = Math.max(maxBackdropZ, z);
+    });
+    backdrops[backdrops.length - 1].style.zIndex = String(maxBackdropZ + 20);
+  }
+}
+
 function openUserModal(userId) {
   _udmUserId = userId;
   var loadingEl = document.getElementById('cdm-loading');
@@ -971,7 +992,11 @@ function openUserModal(userId) {
   loadingEl.classList.remove('d-none');
   contentEl.classList.add('d-none');
   contentEl.innerHTML = '';
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('clientDetailModal')).show();
+
+  var clientModalEl = document.getElementById('clientDetailModal');
+  var clientModal = bootstrap.Modal.getOrCreateInstance(clientModalEl);
+  clientModal.show();
+  setTimeout(function() { _bringModalToFront(clientModalEl); }, 0);
 
   fetch('/admin/user/' + userId + '/profile')
     .then(function(r) { return r.json(); })
@@ -1010,8 +1035,7 @@ function renderUserModal(d) {
     }
     document.getElementById('cdm-meta').innerHTML =
       '<span class="sqh-badge" style="background:rgba(255,255,255,.18);color:#fff;border:1.5px solid rgba(255,255,255,.3);">'
-      + '<i class="fas fa-user me-1"></i>Client</span>'
-      + (d.assessment ? '<span class="sqh-badge ' + statusCls + '">' + d.assessment.status + '</span>' : '');
+      + '<i class="fas fa-user me-1"></i>Client</span>';
   } else {
     var roleIcon = d.role === 'agent' ? 'fa-user-tie' : (d.role === 'admin' ? 'fa-user-shield' : 'fa-user');
     var roleLabel = String(d.role || 'user').replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
@@ -1108,7 +1132,6 @@ function renderUserModal(d) {
       html += '<div class="form-section-title"><i class="fas fa-brain me-2"></i>Latest Assessment</div>';
       html += '<div class="row g-3 mb-3">';
       html += _cdmField('Assessment Date', d.assessment.date);
-      html += _cdmField('Status', d.assessment.status);
       html += _cdmField('DTI Ratio', d.assessment.dti);
       html += _cdmField('Max Loanable', d.assessment.max_loanable);
       html += _cdmField('Similarity', d.assessment.similarity);
@@ -1118,15 +1141,11 @@ function renderUserModal(d) {
     if (d.assessments && d.assessments.length) {
       html += '<hr class="my-3">';
       html += '<div class="form-section-title"><i class="fas fa-history me-2"></i>Recent Assessments</div>';
-      html += '<div class="table-responsive cdm-assess-table-wrap"><table class="table sqh-table mb-0 small"><thead><tr><th>Date</th><th>Assessment Type</th><th>Result</th><th>DTI</th><th>Max Loanable</th><th>Similarity</th></tr></thead><tbody>';
+      html += '<div class="table-responsive cdm-assess-table-wrap"><table class="table sqh-table mb-0 small"><thead><tr><th>Date</th><th>Assessment Type</th><th>DTI</th><th>Max Loanable</th><th>Similarity</th></tr></thead><tbody>';
       d.assessments.forEach(function (row) {
-        var resultCls = row.status === 'Qualified' ? 'badge-qualified'
-          : row.status === 'Conditionally Qualified' ? 'badge-conditional'
-          : 'badge-not-qualified';
         html += '<tr>'
           + '<td>' + _cdmValue(row.date) + '</td>'
           + '<td>' + _cdmAssessmentTypeBadge(row.assessment_mode) + '</td>'
-          + '<td><span class="sqh-badge ' + resultCls + '">' + _cdmValue(row.status) + '</span></td>'
           + '<td>' + _cdmValue(row.dti) + '</td>'
           + '<td>' + _cdmValue(row.max_loanable) + '</td>'
           + '<td>' + _cdmValue(row.similarity) + '</td>'
@@ -5616,13 +5635,10 @@ function _loadPendingDetailsRequests() {
         var status = (row.status || '').toLowerCase();
         var note = row.agent_note ? _escHtml(row.agent_note) : '—';
         var clientLink = _escHtml(row.client_name || 'Client');
-        if (row.client_id) {
-          clientLink = '<div class="d-flex align-items-center gap-2">'
-            + '<span>' + clientLink + '</span>'
-            + '<button type="button" class="btn btn-sm btn-outline-blue open-client-modal-btn" data-client-id="' + row.client_id + '" title="View Client Profile"><i class="fas fa-id-card"></i></button>'
-            + '</div>';
-        }
         var actions = '';
+        if (row.client_id) {
+          actions += '<button type="button" class="btn btn-sm btn-outline-blue me-1 open-client-modal-btn" data-client-id="' + row.client_id + '" title="View Client Profile"><i class="fas fa-id-card"></i></button>';
+        }
         if (status === 'pending' && row.request_id) {
           actions += '<button type="button" class="btn btn-sm btn-lime me-1 pd-approve-btn" data-request-id="' + row.request_id + '"><i class="fas fa-check"></i></button>';
           actions += '<button type="button" class="btn btn-sm btn-outline-crimson pd-reject-btn" data-request-id="' + row.request_id + '"><i class="fas fa-times"></i></button>';
