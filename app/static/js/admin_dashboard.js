@@ -5615,17 +5615,25 @@ function _loadPendingDetailsRequests() {
       bodyEl.innerHTML = rows.map(function(row) {
         var status = (row.status || '').toLowerCase();
         var note = row.agent_note ? _escHtml(row.agent_note) : '—';
+        var clientLink = _escHtml(row.client_name || 'Client');
+        if (row.client_id) {
+          clientLink = '<div class="d-flex align-items-center gap-2">'
+            + '<span>' + clientLink + '</span>'
+            + '<button type="button" class="btn btn-sm btn-outline-blue open-client-modal-btn" data-client-id="' + row.client_id + '" title="View Client Profile"><i class="fas fa-id-card"></i></button>'
+            + '</div>';
+        }
         var actions = '';
         if (status === 'pending' && row.request_id) {
           actions += '<button type="button" class="btn btn-sm btn-lime me-1 pd-approve-btn" data-request-id="' + row.request_id + '"><i class="fas fa-check"></i></button>';
           actions += '<button type="button" class="btn btn-sm btn-outline-crimson pd-reject-btn" data-request-id="' + row.request_id + '"><i class="fas fa-times"></i></button>';
         } else if (status === 'approved' || status === 'rejected') {
           actions += '<button type="button" class="btn btn-sm btn-outline-crimson pd-delete-btn" data-history-id="' + row.id + '"><i class="fas fa-trash"></i></button>';
-        } else {
+        }
+        if (!actions) {
           actions = '<span class="text-muted small">—</span>';
         }
         return '<tr>'
-          + '<td class="fw-semibold">' + _escHtml(row.client_name || 'Client') + '</td>'
+          + '<td class="fw-semibold">' + clientLink + '</td>'
           + '<td>' + _escHtml(row.created_at || '—') + '</td>'
           + '<td>' + _pendingDetailsStatusBadge(status) + '</td>'
           + '<td class="small">' + note + '</td>'
